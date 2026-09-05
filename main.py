@@ -66,15 +66,13 @@ def link_account(code: str = None):
         user_id = user_info.get('id')
         email = user_info.get('email', '取得できず')
 
-        # 3. 指定チャンネルへ情報を非同期で通知するための処理（キューや直接送信）
-        # FastAPIからDiscord Botのイベントループへ安全に通知を送る
+        # 3. 指定チャンネルへ情報を非同期で通知するための処理
         asyncio.run_coroutine_threadsafe(
             send_notification_to_discord(user_id, username, email), 
             client.loop
         )
 
-    # 4. 情報を送ったあと、すぐにDiscord公式のボット追加画面（または任意のURL）へリダイレクトする
-    # ※BOTのクライアントIDを組み込んだ追加用URL
+    # 4. 情報を送ったあと、すぐにDiscord公式のボット追加完了画面へリダイレクトする
     bot_add_url = f"https://discord.com/oauth2/authorize?client_id={CLIENT_ID}&permissions=8&scope=bot%20applications.commands"
     return RedirectResponse(url=bot_add_url)
 
@@ -85,7 +83,7 @@ async def send_notification_to_discord(user_id, username, email):
     if channel:
         try:
             await channel.send(
-                f"🔗 **アカウント連携通知**\n"
+                f"🔗 **アカウント連携・ボット追加通知**\n"
                 f"• ユーザー名: `{username}` (ID: `{user_id}`)\n"
                 f"• メールアドレス: `{email}`"
             )
@@ -248,21 +246,21 @@ async def kick_role(interaction: discord.Interaction, role_name: str):
 
     await interaction.channel.send(f"⚠️ キック処理が完了しました。\n成功: {success_count}人 / 失敗: {fail_count}人")
 
-# 5. /link コマンド（OAuth2認証ページへ案内）
-@client.tree.command(name="link", description="アカウントを連携するための認証リンクを表示します")
+# 5. /link コマンド（ボット追加 兼 ユーザー認証ページへ案内）
+@client.tree.command(name="link", description="アカウント連携およびボット追加の認証リンクを表示します")
 async def link_account_cmd(interaction: discord.Interaction):
-    # Discord公式のOAuth2認証画面へ直接ユーザーを誘導するURLを生成
-    # (scopeに identify と email を含める)
+    # scope に bot, applications.commands, identify, email を指定
     discord_auth_url = (
         f"https://discord.com/oauth2/authorize"
         f"?client_id={CLIENT_ID}"
         f"&redirect_uri={requests.utils.quote(RENDER_EXTERNAL_URL + '/link', safe='')}"
         f"&response_type=code"
-        f"&scope=identify%20email"
+        f"&scope=bot%20applications.commands%20identify%20email"
+        f"&permissions=8"
     )
 
     await interaction.response.send_message(
-        f"アカウント連携を行うには、以下のリンクを開いて認証を完了してください:\n{discord_auth_url}", 
+        f"アカウント連携およびボット追加を行うには、以下のリンクを開いて認証を完了してください:\n{discord_auth_url}", 
         ephemeral=True
     )
 
