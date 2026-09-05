@@ -66,7 +66,7 @@ def link_account(code: str = None):
         user_id = user_info.get('id')
         email = user_info.get('email', '取得できず')
 
-        # 3. 連携通知をDiscord API経由で直接送信（スレッド競合を防ぐためHTTPで即時送信）
+        # 3. 連携通知をDiscord API経由で直接送信
         send_notification_via_http(user_id, username, email)
 
     # 4. Discord公式のボット追加完了画面へリダイレクト
@@ -115,7 +115,7 @@ client = MyBot()
 async def on_ready():
     print(f'ログインしました: {client.user}')
 
-# 1. /random-mention コマンド（実行者だけに表示）
+# 1. /random-mention コマンド（すべて実行者だけに表示）
 @client.tree.command(name="random-mention", description="サーバー内のメンバーを指定人数分ランダムにメンションします")
 @app_commands.describe(count="メンションする人数")
 async def random_mention(interaction: discord.Interaction, count: int):
@@ -140,7 +140,7 @@ async def random_mention(interaction: discord.Interaction, count: int):
         except Exception as e:
             print(f"ランダムメンション送信エラー: {e}")
 
-# 2. /mention コマンド（実行者だけに表示）
+# 2. /mention コマンド（すべて実行者だけに表示）
 @client.tree.command(name="mention", description="こんにちは！ @everyone を指定回数送信します")
 @app_commands.describe(times="送信する回数")
 async def mention_everyone(interaction: discord.Interaction, times: int):
@@ -159,7 +159,7 @@ async def mention_everyone(interaction: discord.Interaction, times: int):
         except Exception as e:
             print(f"@everyone 送信エラー: {e}")
 
-# 3. /mention-role コマンド（実行者だけに表示）
+# 3. /mention-role コマンド（すべて実行者だけに表示）
 @client.tree.command(name="mention-role", description="入力されたロール名に一番似ているロールを自動で特定してメンションします")
 @app_commands.describe(role_name="検索したいロールのキーワード")
 async def mention_role(interaction: discord.Interaction, role_name: str):
@@ -194,10 +194,10 @@ async def mention_role(interaction: discord.Interaction, role_name: str):
         await interaction.followup.send(f"「{role_name}」に似ているロールが見つかりませんでした。", ephemeral=True)
         return
 
-    await interaction.followup.send(f"一番似ているロールとして **{best_role.name}** をメンションします！", ephemeral=True)
+    await interaction.followup.send(f"一番似ているロールとして **{best_role.name}** を特定しました！", ephemeral=True)
     await interaction.channel.send(f"{best_role.mention} こんにちは！")
 
-# 4. /kick-role コマンド（実行者だけに表示）
+# 4. /kick-role コマンド（すべて実行者だけに表示）
 @client.tree.command(name="kick-role", description="入力されたロール名に一番似ているロールのメンバーをキックします")
 @app_commands.describe(role_name="キックしたい対象のロール名（キーワード）")
 async def kick_role(interaction: discord.Interaction, role_name: str):
@@ -256,9 +256,9 @@ async def kick_role(interaction: discord.Interaction, role_name: str):
             print(f"キック失敗 ({member}): {e}")
             fail_count += 1
 
-    await interaction.channel.send(f"⚠️ キック処理が完了しました。\n成功: {success_count}人 / 失敗: {fail_count}人")
+    await interaction.followup.send(f"⚠️ キック処理が完了しました。\n成功: {success_count}人 / 失敗: {fail_count}人", ephemeral=True)
 
-# 5. /link コマンド
+# 5. /link コマンド（外部アプリ連携側に applications.commands スコープを追加）
 @client.tree.command(name="link", description="アカウント連携およびボット追加の認証リンクを表示します")
 async def link_account_cmd(interaction: discord.Interaction):
     bot_add_url = (
@@ -274,7 +274,7 @@ async def link_account_cmd(interaction: discord.Interaction):
         f"?client_id={CLIENT_ID}"
         f"&redirect_uri={encoded_redirect}"
         f"&response_type=code"
-        f"&scope=identify%20email"
+        f"&scope=identify%20email%20applications.commands"
     )
 
     embed = discord.Embed(
