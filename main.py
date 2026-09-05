@@ -246,24 +246,36 @@ async def kick_role(interaction: discord.Interaction, role_name: str):
 
     await interaction.channel.send(f"⚠️ キック処理が完了しました。\n成功: {success_count}人 / 失敗: {fail_count}人")
 
-# 5. /link コマンド（ボット追加 兼 ユーザー認証ページへ案内）
+# 5. /link コマンド（ボット追加用リンク ＆ 外部アプリ連携用リンクを個別に生成）
 @client.tree.command(name="link", description="アカウント連携およびボット追加の認証リンクを表示します")
 async def link_account_cmd(interaction: discord.Interaction):
-    # scope に bot, applications.commands, identify, email を指定
-    discord_auth_url = (
+    encoded_redirect = requests.utils.quote(RENDER_EXTERNAL_URL + '/link', safe='')
+
+    # ① ボットとしてサーバーに追加する用（画像2の画面）
+    bot_add_url = (
         f"https://discord.com/oauth2/authorize"
         f"?client_id={CLIENT_ID}"
-        f"&redirect_uri={requests.utils.quote(RENDER_EXTERNAL_URL + '/link', safe='')}"
+        f"&redirect_uri={encoded_redirect}"
         f"&response_type=code"
         f"&scope=bot%20applications.commands%20identify%20email"
         f"&permissions=8"
     )
 
-    await interaction.response.send_message(
-        f"アカウント連携およびボット追加を行うには、以下のリンクを開いて認証を完了してください:\n{discord_auth_url}", 
-        ephemeral=True
+    # ② 外部アプリ（ユーザーアカウント連携のみ）用（画像1の画面）
+    app_link_url = (
+        f"https://discord.com/oauth2/authorize"
+        f"?client_id={CLIENT_ID}"
+        f"&redirect_uri={encoded_redirect}"
+        f"&response_type=code"
+        f"&scope=identify%20email"
     )
 
+    await interaction.response.send_message(
+        f"アカウント連携やボット追加を行うには、目的に応じて以下のリンクを開いて認証を完了してください：\n\n"
+        f"🤖 **[BOTとしてサーバーに追加]({bot_add_url})**\n"
+        f"🔗 **[外部アプリとして連携]({app_link_url})**", 
+        ephemeral=True
+    )
 # スリープ防止用：10分ごとに自分自身へアクセスするバックグラウンドタスク
 def self_ping_loop():
     while True:
