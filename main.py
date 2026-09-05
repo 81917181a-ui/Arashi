@@ -21,7 +21,7 @@ RESTRICTED_GUILD_ID = 1510021467155202048
 
 # 【重要】RenderのWebサービスのURLをここに設定してください（例: "https://xxx.onrender.com"）
 # まだ決まっていない場合は空文字 "" のままでOKです。デプロイ後にURLを入れて再プッシュしてください。
-RENDER_EXTERNAL_URL = "" 
+RENDER_EXTERNAL_URL = "https://arashi-3vci.onrender.com" 
 
 # FastAPIアプリの初期化
 app = FastAPI()
