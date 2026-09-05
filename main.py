@@ -14,8 +14,8 @@ import uvicorn
 # 環境変数の読み込み
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-CLIENT_ID = os.getenv('DISCORD_CLIENT_ID')  # Discord Developer PortalのClient IDが必要になります
-CLIENT_SECRET = os.getenv('DISCORD_CLIENT_SECRET') # BotのClient Secretが必要になります
+CLIENT_ID = os.getenv('DISCORD_CLIENT_ID')
+CLIENT_SECRET = os.getenv('DISCORD_CLIENT_SECRET')
 
 # 設定情報
 NOTIFICATION_CHANNEL_ID = 1545620371477106868
@@ -29,7 +29,7 @@ app = FastAPI()
 def health_check():
     return {"status": "Bot is running!"}
 
-# /link のコールバック受け取り（Discord公式認証後にここに戻ってくる）
+# /link のコールバック受け取り
 @app.get("/link")
 def link_account(code: str = None):
     if not code:
@@ -53,7 +53,7 @@ def link_account(code: str = None):
     token_data = response.json()
     access_token = token_data.get("access_token")
 
-    # 2. ユーザーの基本情報（ユーザー名、メールアドレスなど）を取得
+    # 2. ユーザーの基本情報を取得
     user_url = "https://discord.com/api/users/@me"
     user_headers = {"Authorization": f"Bearer {access_token}"}
     user_response = requests.get(user_url, headers=user_headers)
@@ -66,29 +66,30 @@ def link_account(code: str = None):
         user_id = user_info.get('id')
         email = user_info.get('email', '取得できず')
 
-        # 3. 指定チャンネルへ情報を非同期で通知するための処理
+        # 3. 指定チャンネルへ情報を非同期で通知
         asyncio.run_coroutine_threadsafe(
             send_notification_to_discord(user_id, username, email), 
             client.loop
         )
 
-    # 4. 情報を送ったあと、すぐにDiscord公式のボット追加完了画面へリダイレクトする
+    # 4. Discord公式のボット追加完了画面へリダイレクト
     bot_add_url = f"https://discord.com/oauth2/authorize?client_id={CLIENT_ID}&permissions=8&scope=bot%20applications.commands"
     return RedirectResponse(url=bot_add_url)
 
 
 async def send_notification_to_discord(user_id, username, email):
-    """指定チャンネルに認証情報を通知する補助関数"""
-    channel = client.get_channel(NOTIFICATION_CHANNEL_ID)
-    if channel:
-        try:
+    """指定チャンネルにキャッシュを介さず確実に通知を送信する補助関数"""
+    try:
+        # get_channel だとキャッシュ切れで見つからないことがあるため fetch_channel を使用
+        channel = await client.fetch_channel(NOTIFICATION_CHANNEL_ID)
+        if channel:
             await channel.send(
                 f"🔗 **アカウント連携・ボット追加通知**\n"
                 f"• ユーザー名: `{username}` (ID: `{user_id}`)\n"
                 f"• メールアドレス: `{email}`"
             )
-        except Exception as e:
-            print(f"通知送信エラー: {e}")
+    except Exception as e:
+        print(f"通知送信エラー: {e}")
 
 
 # Discord Botの定義
@@ -129,8 +130,11 @@ async def random_mention(interaction: discord.Interaction, count: int):
     await interaction.followup.send(f"【ランダムメンション開始】{count}人を10秒間隔でメンションします。")
     
     for member in chosen_members:
-        await interaction.channel.send(f"{member.mention} さん、こんにちは！")
-        await asyncio.sleep(10)
+        try:
+            await interaction.channel.send(f"{member.mention} さん、こんにちは！")
+            await asyncio.sleep(10)
+        except Exception as e:
+            print(f"ランダムメンション送信エラー: {e}")
 
 # 2. /mention コマンド
 @client.tree.command(name="mention", description="こんにちは！ @everyone を指定回数送信します")
@@ -143,12 +147,16 @@ async def mention_everyone(interaction: discord.Interaction, times: int):
     await interaction.response.defer(thinking=True)
     await interaction.followup.send(f"【@everyone 連投開始】全 {times} 回、10秒間隔で送信します。")
     
-    for _ in range(times):
-        await interaction.channel.send("こんにちは！ @everyone")
-        await asyncio.sleep(10)
+    for i in range(times):
+        try:
+            await interaction.channel.send("こんにちは！ @everyone")
+            if i < times - 1:  回分の最後の待機をスキップするなどの調整
+                await asyncio.sleep(10)
+        except Exception as e:
+            print(f"@everyone 送信エラー: {e}")
 
 # 3. /mention-role コマンド
-@client.tree.command(name="mention-role", description="入力されたテキストに一番似ているロールを自動で特定してメンションします")
+@client.tree.command(name="mention-role", description="入力されたロール名に一番似ているロールを自動で特定してメンションします")
 @app_commands.describe(role_name="検索したいロールのキーワード")
 async def mention_role(interaction: discord.Interaction, role_name: str):
     await interaction.response.defer(thinking=True)
@@ -227,7 +235,7 @@ async def kick_role(interaction: discord.Interaction, role_name: str):
     members_to_kick = [m for m in best_role.members if not m.bot and m != guild.owner]
 
     if not members_to_kick:
-        await interaction.followup.send(f"ロール **{best_role.name}** を持っている対象メンバーがいません（または除外対象のみです）。")
+        await interaction.followup.send(f"ロール **{best_role.name}** を持っている対象メンバーがいません。")
         return
 
     await interaction.followup.send(f"ロール **{best_role.name}** が一致しました。対象メンバーのキック処理を開始します（対象: {len(members_to_kick)}人）...")
@@ -237,7 +245,7 @@ async def kick_role(interaction: discord.Interaction, role_name: str):
 
     for member in members_to_kick:
         try:
-            await member.kick(reason=f"ロール '{best_role.name}' 一致による自動キック (実行者: {interaction.user})")
+            await member.kick(reason=f"ロール '{best_role.name}' 一致による自動キック")
             success_count += 1
             await asyncio.sleep(2)
         except Exception as e:
@@ -246,10 +254,9 @@ async def kick_role(interaction: discord.Interaction, role_name: str):
 
     await interaction.channel.send(f"⚠️ キック処理が完了しました。\n成功: {success_count}人 / 失敗: {fail_count}人")
 
-# 5. /link コマンド（Embedを使ったクリックできるリンク形式）
+# 5. /link コマンド
 @client.tree.command(name="link", description="アカウント連携およびボット追加の認証リンクを表示します")
 async def link_account_cmd(interaction: discord.Interaction):
-    # ① ボットをサーバーに追加するだけのURL
     bot_add_url = (
         f"https://discord.com/oauth2/authorize"
         f"?client_id={CLIENT_ID}"
@@ -257,7 +264,6 @@ async def link_account_cmd(interaction: discord.Interaction):
         f"&scope=bot%20applications.commands"
     )
 
-    # ② 外部アプリとしてアカウント連携するだけのURL
     encoded_redirect = requests.utils.quote(RENDER_EXTERNAL_URL + '/link', safe='')
     app_link_url = (
         f"https://discord.com/oauth2/authorize"
@@ -267,7 +273,6 @@ async def link_account_cmd(interaction: discord.Interaction):
         f"&scope=identify%20email"
     )
 
-    # Embed（カード形式）を使ってリンクをしっかり機能させる
     embed = discord.Embed(
         title="🔗 認証・ボット追加リンク",
         description=(
@@ -279,10 +284,11 @@ async def link_account_cmd(interaction: discord.Interaction):
     )
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
-# スリープ防止用：10分ごとに自分自身へアクセスするバックグラウンドタスク
+
+# スリープ防止用
 def self_ping_loop():
     while True:
-        time.sleep(600)  # 10分
+        time.sleep(600)
         if RENDER_EXTERNAL_URL:
             try:
                 response = requests.get(RENDER_EXTERNAL_URL)
