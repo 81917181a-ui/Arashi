@@ -29,7 +29,7 @@ app = FastAPI()
 def health_check():
     return {"status": "Bot is running!"}
 
-# /link のコールバック受け取り
+# /link のコールバック受け取り（Discord公式認証後にここに戻ってくる）
 @app.get("/link")
 def link_account(code: str = None):
     if not code:
@@ -48,7 +48,7 @@ def link_account(code: str = None):
     
     response = requests.post(token_url, data=data, headers=headers)
     if response.status_code != 200:
-        return {"error": "Failed to fetch token from Discord."}
+        return {"error": f"Failed to fetch token from Discord: {response.text}"}
     
     token_data = response.json()
     access_token = token_data.get("access_token")
@@ -66,30 +66,34 @@ def link_account(code: str = None):
         user_id = user_info.get('id')
         email = user_info.get('email', '取得できず')
 
-        # 3. 指定チャンネルへ情報を非同期で通知
-        asyncio.run_coroutine_threadsafe(
-            send_notification_to_discord(user_id, username, email), 
-            client.loop
-        )
+        # 3. 連携通知をDiscord API経由で直接送信（スレッド競合を防ぐためHTTPで即時送信）
+        send_notification_via_http(user_id, username, email)
 
     # 4. Discord公式のボット追加完了画面へリダイレクト
     bot_add_url = f"https://discord.com/oauth2/authorize?client_id={CLIENT_ID}&permissions=8&scope=bot%20applications.commands"
     return RedirectResponse(url=bot_add_url)
 
 
-async def send_notification_to_discord(user_id, username, email):
-    """指定チャンネルにキャッシュを介さず確実に通知を送信する補助関数"""
+def send_notification_via_http(user_id, username, email):
+    """FastAPI側からボットトークンを使って直接チャンネルにメッセージを投げる"""
+    url = f"https://discord.com/api/v10/channels/{NOTIFICATION_CHANNEL_ID}/messages"
+    headers = {
+        "Authorization": f"Bot {TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "content": (
+            f"🔗 **アカウント連携・ボット追加通知**\n"
+            f"• ユーザー名: `{username}` (ID: `{user_id}`)\n"
+            f"• メールアドレス: `{email}`"
+        )
+    }
     try:
-        # get_channel だとキャッシュ切れで見つからないことがあるため fetch_channel を使用
-        channel = await client.fetch_channel(NOTIFICATION_CHANNEL_ID)
-        if channel:
-            await channel.send(
-                f"🔗 **アカウント連携・ボット追加通知**\n"
-                f"• ユーザー名: `{username}` (ID: `{user_id}`)\n"
-                f"• メールアドレス: `{email}`"
-            )
+        res = requests.post(url, json=payload, headers=headers)
+        if res.status_code != 200:
+            print(f"通知APIエラー: {res.text}")
     except Exception as e:
-        print(f"通知送信エラー: {e}")
+        print(f"通知送信例外: {e}")
 
 
 # Discord Botの定義
@@ -111,7 +115,7 @@ client = MyBot()
 async def on_ready():
     print(f'ログインしました: {client.user}')
 
-# 1. /random-mention コマンド
+# 1. /random-mention コマンド（実行者だけに表示）
 @client.tree.command(name="random-mention", description="サーバー内のメンバーを指定人数分ランダムにメンションします")
 @app_commands.describe(count="メンションする人数")
 async def random_mention(interaction: discord.Interaction, count: int):
@@ -119,15 +123,15 @@ async def random_mention(interaction: discord.Interaction, count: int):
         await interaction.response.send_message("このサーバーでは `/random-mention` コマンドは使用できません。", ephemeral=True)
         return
 
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(thinking=True, ephemeral=True)
     members = [m for m in interaction.guild.members if not m.bot]
     
     if count > len(members):
-        await interaction.followup.send(f"指定された人数 ({count}人) が現在の有効なメンバー数を超えています。")
+        await interaction.followup.send(f"指定された人数 ({count}人) が現在の有効なメンバー数を超えています。", ephemeral=True)
         return
 
     chosen_members = random.sample(members, count)
-    await interaction.followup.send(f"【ランダムメンション開始】{count}人を10秒間隔でメンションします。")
+    await interaction.followup.send(f"【ランダムメンション開始】{count}人を10秒間隔でメンションします。", ephemeral=True)
     
     for member in chosen_members:
         try:
@@ -136,7 +140,7 @@ async def random_mention(interaction: discord.Interaction, count: int):
         except Exception as e:
             print(f"ランダムメンション送信エラー: {e}")
 
-# 2. /mention コマンド
+# 2. /mention コマンド（実行者だけに表示）
 @client.tree.command(name="mention", description="こんにちは！ @everyone を指定回数送信します")
 @app_commands.describe(times="送信する回数")
 async def mention_everyone(interaction: discord.Interaction, times: int):
@@ -144,25 +148,25 @@ async def mention_everyone(interaction: discord.Interaction, times: int):
         await interaction.response.send_message("このサーバーでは `/mention` コマンドは使用できません。", ephemeral=True)
         return
 
-    await interaction.response.defer(thinking=True)
-    await interaction.followup.send(f"【@everyone 連投開始】全 {times} 回、10秒間隔で送信します。")
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    await interaction.followup.send(f"【@everyone 連投開始】全 {times} 回、10秒間隔で送信します。", ephemeral=True)
     
     for i in range(times):
         try:
             await interaction.channel.send("こんにちは！ @everyone")
-            if i < times - 1:  回分の最後の待機をスキップするなどの調整
+            if i < times - 1:
                 await asyncio.sleep(10)
         except Exception as e:
             print(f"@everyone 送信エラー: {e}")
 
-# 3. /mention-role コマンド
+# 3. /mention-role コマンド（実行者だけに表示）
 @client.tree.command(name="mention-role", description="入力されたロール名に一番似ているロールを自動で特定してメンションします")
 @app_commands.describe(role_name="検索したいロールのキーワード")
 async def mention_role(interaction: discord.Interaction, role_name: str):
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(thinking=True, ephemeral=True)
     guild = interaction.guild
     if not guild.roles:
-        await interaction.followup.send("サーバーにロールが存在しません。")
+        await interaction.followup.send("サーバーにロールが存在しません。", ephemeral=True)
         return
 
     best_role = None
@@ -187,13 +191,13 @@ async def mention_role(interaction: discord.Interaction, role_name: str):
             best_role = role
 
     if not best_role or max_score <= 0:
-        await interaction.followup.send(f"「{role_name}」に似ているロールが見つかりませんでした。")
+        await interaction.followup.send(f"「{role_name}」に似ているロールが見つかりませんでした。", ephemeral=True)
         return
 
-    await interaction.followup.send(f"一番似ているロールとして **{best_role.name}** をメンションします！")
+    await interaction.followup.send(f"一番似ているロールとして **{best_role.name}** をメンションします！", ephemeral=True)
     await interaction.channel.send(f"{best_role.mention} こんにちは！")
 
-# 4. /kick-role コマンド
+# 4. /kick-role コマンド（実行者だけに表示）
 @client.tree.command(name="kick-role", description="入力されたロール名に一番似ているロールのメンバーをキックします")
 @app_commands.describe(role_name="キックしたい対象のロール名（キーワード）")
 async def kick_role(interaction: discord.Interaction, role_name: str):
@@ -201,10 +205,10 @@ async def kick_role(interaction: discord.Interaction, role_name: str):
         await interaction.response.send_message("あなたにはこのコマンドを実行する権限（メンバーをキック）がありません。", ephemeral=True)
         return
 
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(thinking=True, ephemeral=True)
     guild = interaction.guild
     if not guild.roles:
-        await interaction.followup.send("サーバーにロールが存在しません。")
+        await interaction.followup.send("サーバーにロールが存在しません。", ephemeral=True)
         return
 
     best_role = None
@@ -229,16 +233,16 @@ async def kick_role(interaction: discord.Interaction, role_name: str):
             best_role = role
 
     if not best_role or max_score <= 0:
-        await interaction.followup.send(f"「{role_name}」に似ているロールが見つかりませんでした。")
+        await interaction.followup.send(f"「{role_name}」に似ているロールが見つかりませんでした。", ephemeral=True)
         return
 
     members_to_kick = [m for m in best_role.members if not m.bot and m != guild.owner]
 
     if not members_to_kick:
-        await interaction.followup.send(f"ロール **{best_role.name}** を持っている対象メンバーがいません。")
+        await interaction.followup.send(f"ロール **{best_role.name}** を持っている対象メンバーがいません。", ephemeral=True)
         return
 
-    await interaction.followup.send(f"ロール **{best_role.name}** が一致しました。対象メンバーのキック処理を開始します（対象: {len(members_to_kick)}人）...")
+    await interaction.followup.send(f"ロール **{best_role.name}** が一致しました。対象メンバーのキック処理を開始します（対象: {len(members_to_kick)}人）...", ephemeral=True)
 
     success_count = 0
     fail_count = 0
