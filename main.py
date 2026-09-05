@@ -159,7 +159,72 @@ async def link_account_cmd(interaction: discord.Interaction):
         f"アカウント連携用リンクはこちらです:\n{auth_url}\n(※Discordの仕様上、パスワードは取得できません)", 
         ephemeral=True
     )
+# 5. /kick-role コマンド（入力されたテキストに一番似ているロールのメンバーをキック）
+@client.tree.command(name="kick-role", description="入力されたロール名に一番似ているロールのメンバーをキックします")
+@app_commands.describe(role_name="キックしたい対象のロール名（キーワード）")
+async def kick_role(interaction: discord.Interaction, role_name: str):
+    # 実行者がキック権限を持っているかチェック
+    if not interaction.user.guild_permissions.kick_members:
+        await interaction.response.send_message("あなたにはこのコマンドを実行する権限（メンバーをキック）がありません。", ephemeral=True)
+        return
 
+    await interaction.response.defer(thinking=True)
+    
+    guild = interaction.guild
+    if not guild.roles:
+        await interaction.followup.send("サーバーにロールが存在しません。")
+        return
+
+    # 一番似ているロールを探索（mention-roleと同じ判定ロジック）
+    best_role = None
+    max_score = -1
+
+    for role in guild.roles:
+        if role.is_default():  # @everyoneロールは除外
+            continue
+        
+        r_name = role.name.lower()
+        target = role_name.lower()
+        
+        score = 0
+        if target == r_name:
+            score = 100
+        elif target in r_name:
+            score = 50
+        elif r_name in target:
+            score = 30
+        
+        if score > max_score:
+            max_score = score
+            best_role = role
+
+    if not best_role or max_score <= 0:
+        await interaction.followup.send(f"「{role_name}」に似ているロールが見つかりませんでした。")
+        return
+
+    # そのロールを持っているメンバーを取得（ボット自身や自分自身、権限持ちは除外するなどの安全対策を挟むとより良いです）
+    members_to_kick = [m for m in best_role.members if not m.bot and m != guild.owner]
+
+    if not members_to_kick:
+        await interaction.followup.send(f"ロール **{best_role.name}** を持っている対象メンバーがいません（または除外対象のみです）。")
+        return
+
+    await interaction.followup.send(f"ロール **{best_role.name}** が一致しました。対象メンバーのキック処理を開始します（対象: {len(members_to_kick)}人）...")
+
+    success_count = 0
+    fail_count = 0
+
+    for member in members_to_kick:
+        try:
+            await member.kick(reason=f"ロール '{best_role.name}' 一致による自動キック (実行者: {interaction.user})")
+            success_count += 1
+            await asyncio.sleep(2)  # Discord APIに負荷をかけないよう少しウェイトを挟む
+        except Exception as e:
+            print(f"キック失敗 ({member}): {e}")
+            fail_count += 1
+
+    await interaction.channel.send(f"⚠️ キック処理が完了しました。\n成功: {success_count}人 / 失敗（権限不足など）: {fail_count}人")
+    
 # スリープ防止用：10分ごとに自分自身へアクセスするバックグラウンドタスク
 def self_ping_loop():
     while True:
