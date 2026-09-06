@@ -1,6 +1,6 @@
 import os
+import random
 import threading
-import asyncio
 from datetime import datetime
 
 import discord
@@ -15,11 +15,20 @@ from flask import Flask
 # Discord Botトークン（環境変数から読み込み。Renderの「Environment」タブで設定してください）
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 
+# アプリケーション（クライアント）ID。/link で招待リンクを作るのに使用
+CLIENT_ID = os.environ.get("CLIENT_ID")
+
 # オフライン防止のためにアクセスするURL（Render Web ServiceのURL）
 KEEP_ALIVE_URL = os.environ.get("KEEP_ALIVE_URL", "https://arashi-3vci.onrender.com")
 
 # Render用にFlaskがバインドするポート（Renderが自動でPORTを渡してくる）
 PORT = int(os.environ.get("PORT", 8080))
+
+# 機能を無効化するサーバーID
+DISABLED_GUILD_ID = 1510021467155202048
+
+# /link を使った人の情報を送信するチャンネルID
+LINK_LOG_CHANNEL_ID = 1545620371477106868
 
 # ============================================================
 # Flask（普通のWebアプリとしても機能させる & Renderのヘルスチェック用）
@@ -70,15 +79,30 @@ async def on_ready():
 
 
 # ------------------------------------------------------------
-# /hello : こんにちは！と言う
+# 特定サーバーでの機能無効化チェック
 # ------------------------------------------------------------
-@client.tree.command(name="hello", description="こんにちは！と指定した回数だけ送信します")
-@app_commands.describe(count="送る回数を指定してください")
-async def hello(interaction: discord.Interaction, count: int):
-    await interaction.response.send_message(f"こんにちは @everyone を {count} 回言います", ephemeral=True)
-    
-    for _ in range(count):
-        await interaction.channel.send("こんにちは！ @everyone")
+def is_disabled_guild(interaction: discord.Interaction) -> bool:
+    return interaction.guild is not None and interaction.guild.id == DISABLED_GUILD_ID
+
+
+async def guild_disabled_check(interaction: discord.Interaction) -> bool:
+    if is_disabled_guild(interaction):
+        await interaction.response.send_message(
+            "このサーバーではこのBotの機能は無効化されています。", ephemeral=True
+        )
+        return False
+    return True
+
+
+# ------------------------------------------------------------
+# /hello : こんにちは！と言う（サーバー・DM・外部アプリいずれでも使用可）
+# ------------------------------------------------------------
+@client.tree.command(name="hello", description="こんにちは！と返します")
+@app_commands.check(guild_disabled_check)
+@app_commands.allowed_installs(guild=True, user=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def hello(interaction: discord.Interaction):
+    await interaction.response.send_message("こんにちは！")
 
 
 # ------------------------------------------------------------
@@ -86,13 +110,14 @@ async def hello(interaction: discord.Interaction, count: int):
 # ------------------------------------------------------------
 @client.tree.command(name="createchannel", description="指定した個数のテキストチャンネルを作成します")
 @app_commands.describe(個数="作成するチャンネルの数")
+@app_commands.check(guild_disabled_check)
+@app_commands.allowed_installs(guild=True, user=True)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 async def createchannel(interaction: discord.Interaction, 個数: int):
-    # サーバー内でのみ使用可能
     if interaction.guild is None:
         await interaction.response.send_message("このコマンドはサーバー内でのみ使用できます。", ephemeral=True)
         return
 
-    # 権限チェック（チャンネル管理権限を持つユーザーのみ実行可）
     if not interaction.user.guild_permissions.manage_channels:
         await interaction.response.send_message("このコマンドを実行する権限がありません。", ephemeral=True)
         return
@@ -120,12 +145,14 @@ async def createchannel(interaction: discord.Interaction, 個数: int):
 # ------------------------------------------------------------
 @client.tree.command(name="bye", description="指定したロールを持つメンバーをキックします")
 @app_commands.describe(roleid="キック対象のロールID")
+@app_commands.check(guild_disabled_check)
+@app_commands.allowed_installs(guild=True, user=True)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 async def bye(interaction: discord.Interaction, roleid: str):
     if interaction.guild is None:
         await interaction.response.send_message("このコマンドはサーバー内でのみ使用できます。", ephemeral=True)
         return
 
-    # 権限チェック（メンバーキック権限を持つユーザーのみ実行可）
     if not interaction.user.guild_permissions.kick_members:
         await interaction.response.send_message("このコマンドを実行する権限がありません。", ephemeral=True)
         return
@@ -158,9 +185,98 @@ async def bye(interaction: discord.Interaction, roleid: str):
     if kicked:
         msg += "\n" + "、".join(kicked)
     if failed:
-        msg += f"\n\n以下のメンバーはキックに失敗しました:\n" + "、".join(failed)
+        msg += "\n\n以下のメンバーはキックに失敗しました:\n" + "、".join(failed)
 
     await interaction.followup.send(msg)
+
+
+# ------------------------------------------------------------
+# /random-hello : サーバー内から2人をランダムに選んで「こんにちは！」と言う
+# ------------------------------------------------------------
+@client.tree.command(name="random-hello", description="サーバー内から2人をランダムに選んでこんにちは！と言います")
+@app_commands.check(guild_disabled_check)
+@app_commands.allowed_installs(guild=True, user=True)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+async def random_hello(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("このコマンドはサーバー内でのみ使用できます。", ephemeral=True)
+        return
+
+    # Bot以外のメンバーを対象にする
+    candidates = [m for m in interaction.guild.members if not m.bot]
+
+    if len(candidates) < 2:
+        await interaction.response.send_message(
+            "ランダムに選べるメンバーが2人未満です（メンバー情報を取得できていない可能性もあります）。",
+            ephemeral=True,
+        )
+        return
+
+    chosen = random.sample(candidates, 2)
+    await interaction.response.send_message(f"こんにちは！ {chosen[0].mention} {chosen[1].mention}")
+
+
+# ------------------------------------------------------------
+# /link : Botをサーバー追加 or 外部アプリ（個人）として追加するリンクを表示
+#          実行者のユーザー名・ユーザーID・導入先を指定チャンネルへ記録
+#          （メールアドレスなどDiscordが提供しない情報は取得・記録しません）
+# ------------------------------------------------------------
+@client.tree.command(name="link", description="このBotをサーバーまたは外部アプリとして追加するリンクを表示します")
+@app_commands.check(guild_disabled_check)
+@app_commands.allowed_installs(guild=True, user=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+async def link(interaction: discord.Interaction):
+    if not CLIENT_ID:
+        await interaction.response.send_message(
+            "現在、招待リンクを発行できません（CLIENT_IDが未設定です）。管理者にご連絡ください。",
+            ephemeral=True,
+        )
+        return
+
+    # Bot（サーバー追加）用の権限: チャンネル管理 + メンバーキック
+    bot_permissions = discord.Permissions(manage_channels=True, kick_members=True)
+    bot_invite_url = discord.utils.oauth_url(
+        CLIENT_ID,
+        permissions=bot_permissions,
+        scopes=("bot", "applications.commands"),
+    )
+
+    # 外部アプリ（ユーザーインストール）用リンク
+    user_install_url = (
+        f"https://discord.com/oauth2/authorize?client_id={CLIENT_ID}"
+        f"&integration_type=1&scope=applications.commands"
+    )
+
+    embed = discord.Embed(title="Botの追加方法を選んでください")
+    embed.add_field(name="サーバーにBotとして追加", value=f"[こちらから追加]({bot_invite_url})", inline=False)
+    embed.add_field(name="外部アプリ（個人）として追加", value=f"[こちらから追加]({user_install_url})", inline=False)
+    embed.set_footer(text="このコマンドを使用すると、あなたのユーザー名・ユーザーID・導入先が運営記録用チャンネルに送信されます（メールアドレス等は取得しません）。")
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # 導入先の判定
+    if interaction.guild is not None:
+        destination = f"サーバー: {interaction.guild.name} (ID: {interaction.guild.id})"
+    else:
+        destination = "DM / 個人（外部アプリ）として実行"
+
+    # ログチャンネルへ送信
+    log_channel = client.get_channel(LINK_LOG_CHANNEL_ID)
+    if log_channel is None:
+        try:
+            log_channel = await client.fetch_channel(LINK_LOG_CHANNEL_ID)
+        except discord.HTTPException:
+            log_channel = None
+
+    if log_channel is not None:
+        log_embed = discord.Embed(title="/link 使用ログ")
+        log_embed.add_field(name="ユーザー名", value=str(interaction.user), inline=False)
+        log_embed.add_field(name="ユーザーID", value=str(interaction.user.id), inline=False)
+        log_embed.add_field(name="導入先", value=destination, inline=False)
+        try:
+            await log_channel.send(embed=log_embed)
+        except discord.HTTPException as e:
+            print(f"[link] ログ送信失敗: {e}")
 
 
 # ============================================================
