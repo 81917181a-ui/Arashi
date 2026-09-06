@@ -215,53 +215,79 @@ async def random_hello(interaction: discord.Interaction, count: int):
     mentions = " ".join([m.mention for m in chosen])
     await interaction.response.send_message(f"こんにちは！ {mentions}")
 # ------------------------------------------------------------
-# /link : Bot追加リンク
+# /link : Botをサーバー追加 or 外部アプリ（個人）として追加するリンクを表示
+#          実行者のユーザー名・ユーザーID・導入先を指定チャンネルへ記録
+#          （メールアドレスなどDiscordが提供しない情報は取得・記録しません）
 # ------------------------------------------------------------
 @client.tree.command(name="link", description="このBotをサーバーまたは外部アプリとして追加するリンクを表示します")
 @app_commands.check(guild_disabled_check)
 @app_commands.allowed_installs(guild=True, user=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 async def link(interaction: discord.Interaction):
-    if not CLIENT_ID:
-        await interaction.response.send_message("CLIENT_IDが未設定です。", ephemeral=True)
-        return
-
-    bot_permissions = discord.Permissions(manage_channels=True, kick_members=True)
-    bot_invite_url = discord.utils.oauth_url(
-        CLIENT_ID,
-        permissions=bot_permissions,
-        scopes=("bot", "applications.commands"),
-    )
-    user_install_url = f"https://discord.com/oauth2/authorize?client_id={CLIENT_ID}&integration_type=1&scope=applications.commands"
-
-    embed = discord.Embed(title="Botの追加方法を選んでください")
-    embed.add_field(name="サーバーにBotとして追加", value=f"[こちらから追加]({bot_invite_url})", inline=False)
-    embed.add_field(name="外部アプリ（個人）として追加", value=f"[こちらから追加]({user_install_url})", inline=False)
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    if interaction.guild is not None:
-        destination = f"サーバー: {interaction.guild.name} (ID: {interaction.guild.id})"
-    else:
-        destination = "DM / 個人"
-
-    log_channel = client.get_channel(LINK_LOG_CHANNEL_ID)
-    if log_channel is None:
+    # 最初にdeferして「考え中...」状態にする（3秒タイムアウトで
+    # 「応答しませんでした」にならないようにするため）
+    await interaction.response.defer(ephemeral=True)
+ 
+    try:
+        if not CLIENT_ID:
+            await interaction.followup.send(
+                "現在、招待リンクを発行できません（CLIENT_IDが未設定です）。管理者にご連絡ください。",
+                ephemeral=True,
+            )
+            return
+ 
+        # Bot（サーバー追加）用の権限: チャンネル管理 + メンバーキック
+        bot_permissions = discord.Permissions(manage_channels=True, kick_members=True)
+        bot_invite_url = discord.utils.oauth_url(
+            CLIENT_ID,
+            permissions=bot_permissions,
+            scopes=("bot", "applications.commands"),
+        )
+ 
+        # 外部アプリ（ユーザーインストール）用リンク
+        user_install_url = (
+            f"https://discord.com/oauth2/authorize?client_id={CLIENT_ID}"
+            f"&integration_type=1&scope=applications.commands"
+        )
+ 
+        embed = discord.Embed(title="Botの追加方法を選んでください")
+        embed.add_field(name="サーバーにBotとして追加", value=f"[こちらから追加]({bot_invite_url})", inline=False)
+        embed.add_field(name="外部アプリ（個人）として追加", value=f"[こちらから追加]({user_install_url})", inline=False)
+        embed.set_footer(text="このコマンドを使用すると、あなたのユーザー名・ユーザーID・導入先が運営記録用チャンネルに送信されます（メールアドレス等は取得しません）。")
+ 
+        # ここは既にdefer済みなのでfollowup.sendを使う
+        await interaction.followup.send(embed=embed, ephemeral=True)
+ 
+        # 導入先の判定
+        if interaction.guild is not None:
+            destination = f"サーバー: {interaction.guild.name} (ID: {interaction.guild.id})"
+        else:
+            destination = "DM / 個人（外部アプリ）として実行"
+ 
+        # ログチャンネルへ送信（失敗してもユーザーへの応答には影響させない）
         try:
-            log_channel = await client.fetch_channel(LINK_LOG_CHANNEL_ID)
-        except Exception:
-            log_channel = None
-
-    if log_channel is not None:
-        log_embed = discord.Embed(title="/link 使用ログ")
-        log_embed.add_field(name="ユーザー名", value=str(interaction.user), inline=False)
-        log_embed.add_field(name="ユーザーID", value=str(interaction.user.id), inline=False)
-        log_embed.add_field(name="導入先", value=destination, inline=False)
-        try:
+            log_channel = client.get_channel(LINK_LOG_CHANNEL_ID)
+            if log_channel is None:
+                log_channel = await client.fetch_channel(LINK_LOG_CHANNEL_ID)
+ 
+            log_embed = discord.Embed(title="/link 使用ログ")
+            log_embed.add_field(name="ユーザー名", value=str(interaction.user), inline=False)
+            log_embed.add_field(name="ユーザーID", value=str(interaction.user.id), inline=False)
+            log_embed.add_field(name="導入先", value=destination, inline=False)
             await log_channel.send(embed=log_embed)
         except Exception as e:
             print(f"[link] ログ送信失敗: {e}")
-
+ 
+    except Exception as e:
+        # 想定外のエラーが起きても、ユーザーには必ず何か返す
+        print(f"[link] 予期しないエラー: {e}")
+        try:
+            await interaction.followup.send(
+                "リンクの発行中にエラーが発生しました。もう一度お試しいただくか、管理者にご連絡ください。",
+                ephemeral=True,
+            )
+        except Exception:
+            pass
 # ============================================================
 # オフライン防止: 10分ごとにKEEP_ALIVE_URLへアクセスして起こす
 # ============================================================
