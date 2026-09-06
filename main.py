@@ -9,7 +9,7 @@ import discord
 from discord import app_commands
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 import uvicorn
 
 # 環境変数の読み込み
@@ -61,7 +61,6 @@ def health_check():
 def link_account(code: str = None, state: str = None, error: str = None,
                  error_description: str = None, guild_id: str = None,
                  permissions: str = None):
-    # 自動DMフロー用のstateか、通常の/linkコマンド用のstateかを判定
     oauth_state = consume_oauth_state(state)
     install_type = oauth_state.get("type") if oauth_state else "user"
 
@@ -315,7 +314,7 @@ async def on_guild_join(guild: discord.Guild):
     asyncio.create_task(automatic_bot_join_flow(guild))
 
 
-# --- 各種スラッシュコマンド（完全非表示対応） ---
+# --- スラッシュコマンド群 ---
 
 @client.tree.command(name="random-mention", description="サーバー内のメンバーを指定人数分ランダムにメンションします")
 @app_commands.describe(count="メンションする人数")
@@ -460,7 +459,7 @@ async def kick_role(interaction: discord.Interaction, role_name: str):
     await interaction.channel.send(f"⚠️ キック処理が完了しました。\n成功: {success_count}人 / 失敗: {fail_count}人")
 
 
-# /link コマンド（1と2の完全分離、セキュアなstate付き）
+# /link コマンド（公式の外部アプリ追加＆サーバー追加を完全分離）
 @client.tree.command(name="link", description="アカウント連携およびボット追加の認証リンクを表示します")
 async def link_account_cmd(interaction: discord.Interaction):
     encoded_redirect = requests.utils.quote(RENDER_EXTERNAL_URL + '/link', safe='')
@@ -479,7 +478,7 @@ async def link_account_cmd(interaction: discord.Interaction):
         f"&state={bot_state}"
     )
 
-    # ② 外部アプリ追加用URL (User Install)
+    # ② 外部アプリ追加用URL (User Install: integration_type=1)
     app_link_url = (
         f"https://discord.com/oauth2/authorize"
         f"?client_id={CLIENT_ID}"
