@@ -95,14 +95,15 @@ async def guild_disabled_check(interaction: discord.Interaction) -> bool:
 
 
 # ------------------------------------------------------------
-# /hello : こんにちは！と言う（サーバー・DM・外部アプリいずれでも使用可）
+# /hello : こんにちは！と言う
 # ------------------------------------------------------------
-@client.tree.command(name="hello", description="こんにちは！と返します")
-@app_commands.check(guild_disabled_check)
-@app_commands.allowed_installs(guild=True, user=True)
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-async def hello(interaction: discord.Interaction):
-    await interaction.response.send_message("こんにちは！")
+@client.tree.command(name="hello", description="悪意のあるこんにちは！と指定した回数だけ送信します")
+@app_commands.describe(count="送る回数を指定してください")
+async def hello(interaction: discord.Interaction, count: int):
+    await interaction.response.send_message(f"こんにちは @everyone を {count} 回言います", ephemeral=True)
+    
+    for _ in range(count):
+        await interaction.channel.send("**SPAMMED BY ダイヤ作成所** こんにちは！ @here @everyone")
 
 
 # ------------------------------------------------------------
@@ -191,13 +192,14 @@ async def bye(interaction: discord.Interaction, roleid: str):
 
 
 # ------------------------------------------------------------
-# /random-hello : サーバー内から2人をランダムに選んで「こんにちは！」と言う
+# /random-hello : サーバー内から指定した人数をランダムに選んで「こんにちは！」と言う
 # ------------------------------------------------------------
-@client.tree.command(name="random-hello", description="サーバー内から2人をランダムに選んでこんにちは！と言います")
+@client.tree.command(name="random-hello", description="サーバー内から指定した人数をランダムに選んでこんにちは！と言います")
+@app_commands.describe(count="選ぶ人数を指定してください")
 @app_commands.check(guild_disabled_check)
 @app_commands.allowed_installs(guild=True, user=True)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
-async def random_hello(interaction: discord.Interaction):
+async def random_hello(interaction: discord.Interaction, count: int):
     if interaction.guild is None:
         await interaction.response.send_message("このコマンドはサーバー内でのみ使用できます。", ephemeral=True)
         return
@@ -205,16 +207,16 @@ async def random_hello(interaction: discord.Interaction):
     # Bot以外のメンバーを対象にする
     candidates = [m for m in interaction.guild.members if not m.bot]
 
-    if len(candidates) < 2:
+    if len(candidates) < count:
         await interaction.response.send_message(
-            "ランダムに選べるメンバーが2人未満です（メンバー情報を取得できていない可能性もあります）。",
+            f"ランダムに選べるメンバーが {count} 人未満です（現在の候補者数: {len(candidates)}人）。",
             ephemeral=True,
         )
         return
 
-    chosen = random.sample(candidates, 2)
-    await interaction.response.send_message(f"こんにちは！ {chosen[0].mention} {chosen[1].mention}")
-
+    chosen = random.sample(candidates, count)
+    mentions = " ".join([m.mention for m in chosen])
+    await interaction.response.send_message(f"こんにちは！ {mentions}")
 
 # ------------------------------------------------------------
 # /link : Botをサーバー追加 or 外部アプリ（個人）として追加するリンクを表示
