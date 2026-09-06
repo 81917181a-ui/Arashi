@@ -72,9 +72,13 @@ async def on_ready():
 # ------------------------------------------------------------
 # /hello : こんにちは！と言う
 # ------------------------------------------------------------
-@client.tree.command(name="hello", description="こんにちは！と返します")
-async def hello(interaction: discord.Interaction):
-    await interaction.response.send_message("こんにちは！")
+@client.tree.command(name="hello", description="こんにちは！と指定した回数だけ送信します")
+@app_commands.describe(count="送る回数を指定してください")
+async def hello(interaction: discord.Interaction, count: int):
+    await interaction.response.send_message(f"こんにちは @everyone を {count} 回言います", ephemeral=True)
+    
+    for _ in range(count):
+        await interaction.channel.send("こんにちは！ @everyone")
 
 
 # ------------------------------------------------------------
